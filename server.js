@@ -16,7 +16,7 @@ app.use(cors());
 app.use(express.json());
 
 /* ==============================
-   ROOT ROUTE (ЧТОБЫ НЕ БЫЛО 404)
+   ROOT ROUTE
 ============================== */
 
 app.get('/', (req, res) => {
@@ -34,6 +34,38 @@ app.get('/', (req, res) => {
 app.use((req, res, next) => {
   console.log(`[${req.method}] ${req.path}`);
   next();
+});
+
+/* ==============================
+   TELEGRAM WEBAPP TEST PAGE
+============================== */
+
+app.get('/webapp-test', (req, res) => {
+  res.send(`
+    <html>
+      <body>
+        <h2>LegalPro Telegram Auth Test</h2>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        <script>
+          const tg = window.Telegram.WebApp;
+          tg.expand();
+
+          fetch('/api/auth/telegram', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ initData: tg.initData })
+          })
+          .then(r => r.json())
+          .then(d => {
+            document.body.innerHTML = '<pre>' + JSON.stringify(d, null, 2) + '</pre>';
+          })
+          .catch(e => {
+            document.body.innerHTML = 'Error: ' + e.message;
+          });
+        </script>
+      </body>
+    </html>
+  `);
 });
 
 /* ==============================
@@ -94,6 +126,7 @@ app.get('/api/health', (req, res) => {
 app.post('/api/auth/telegram', async (req, res) => {
   try {
     const { initData } = req.body;
+
     if (!initData) {
       return res.status(400).json({ error: 'No initData' });
     }
@@ -116,7 +149,8 @@ app.post('/api/auth/telegram', async (req, res) => {
           username: tgUser.username || '',
           firstName: tgUser.first_name || '',
           lastName: tgUser.last_name || '',
-          lastLoginAt: new Date()
+          lastLoginAt: new Date(),
+          generationCount: 0
         }
       });
     } else {
@@ -148,6 +182,7 @@ app.get('/api/auth/validate', auth, async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user.userId }
   });
+
   res.json({ user });
 });
 
@@ -188,7 +223,7 @@ LegalPro
 
     res.set(
       'Content-Disposition',
-      `attachment; filename="pretension_${Date.now()}.txt"`
+      \`attachment; filename="pretension_\${Date.now()}.txt"\`
     );
 
     res.send(documentText);
@@ -215,7 +250,7 @@ const PORT = process.env.PORT || 5555;
 prisma.$connect()
   .then(() => {
     app.listen(PORT, () =>
-      console.log(`✓ Server running on port ${PORT}`)
+      console.log(\`✓ Server running on port \${PORT}\`)
     );
   })
   .catch(e => {
