@@ -5,8 +5,9 @@
   "scripts": {
     "dev": "node scripts/dev.js",
 
-    "prestart": "npx prisma db push",
-    "start": "node --enable-source-maps server.js",
+    "postinstall": "prisma generate",
+
+    "start": "prisma db push && node server.js",
 
     "worker": "node worker/pdfWorker.js",
     "generate": "prisma generate",
