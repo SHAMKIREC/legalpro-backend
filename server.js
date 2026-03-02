@@ -16,6 +16,18 @@ app.use(cors());
 app.use(express.json());
 
 /* ==============================
+   ROOT ROUTE (ЧТОБЫ НЕ БЫЛО 404)
+============================== */
+
+app.get('/', (req, res) => {
+  res.json({
+    name: 'LegalPro API',
+    status: 'running',
+    version: '1.0.0'
+  });
+});
+
+/* ==============================
    LOGGER
 ============================== */
 
@@ -76,20 +88,17 @@ app.get('/api/health', (req, res) => {
 });
 
 /* ==============================
-   TELEGRAM LOGIN (REAL)
+   TELEGRAM LOGIN
 ============================== */
 
 app.post('/api/auth/telegram', async (req, res) => {
   try {
     const { initData } = req.body;
-
     if (!initData) {
       return res.status(400).json({ error: 'No initData' });
     }
 
-    const isValid = validateTelegramData(initData);
-
-    if (!isValid) {
+    if (!validateTelegramData(initData)) {
       return res.status(403).json({ error: 'Invalid Telegram signature' });
     }
 
@@ -132,7 +141,7 @@ app.post('/api/auth/telegram', async (req, res) => {
 });
 
 /* ==============================
-   VALIDATE TOKEN
+   TOKEN VALIDATION
 ============================== */
 
 app.get('/api/auth/validate', auth, async (req, res) => {
@@ -140,36 +149,6 @@ app.get('/api/auth/validate', auth, async (req, res) => {
     where: { id: req.user.userId }
   });
   res.json({ user });
-});
-
-/* ==============================
-   ACTIVATE PRO
-============================== */
-
-app.post('/api/pro/activate', auth, async (req, res) => {
-  try {
-    const proUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-
-    const user = await prisma.user.update({
-      where: { id: req.user.userId },
-      data: {
-        proStatus: true,
-        proActivatedAt: new Date(),
-        proUntil
-      }
-    });
-
-    const token = jwt.sign(
-      { userId: user.id, telegramId: user.telegramId },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    res.json({ success: true, user, token });
-
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
 });
 
 /* ==============================
@@ -220,11 +199,11 @@ LegalPro
 });
 
 /* ==============================
-   404
+   404 HANDLER
 ============================== */
 
 app.use((req, res) => {
-  res.status(404).json({ error: 'Not found' });
+  res.status(404).json({ error: 'Route not found' });
 });
 
 /* ==============================
@@ -233,11 +212,13 @@ app.use((req, res) => {
 
 const PORT = process.env.PORT || 5555;
 
-prisma.$connect().then(() => {
-  app.listen(PORT, () =>
-    console.log(`✓ Server on port ${PORT}`)
-  );
-}).catch(e => {
-  console.error('Database error:', e.message);
-  process.exit(1);
-});
+prisma.$connect()
+  .then(() => {
+    app.listen(PORT, () =>
+      console.log(`✓ Server running on port ${PORT}`)
+    );
+  })
+  .catch(e => {
+    console.error('Database error:', e.message);
+    process.exit(1);
+  });
