@@ -5,6 +5,7 @@ const cors = require('cors');
 const crypto = require('crypto');
 const { PrismaClient } = require('@prisma/client');
 const jwt = require('jsonwebtoken');
+const { exec } = require('child_process');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -26,12 +27,11 @@ app.use((req, res, next) => {
 });
 
 /* ==============================
-   ROOT = TELEGRAM WEBAPP PAGE
+   ROOT
 ============================== */
 
 app.get('/', (req, res) => {
   res.set('Content-Type', 'text/html; charset=utf-8');
-
   res.send(`
 <!DOCTYPE html>
 <html>
@@ -39,114 +39,73 @@ app.get('/', (req, res) => {
 <meta charset="UTF-8">
 <title>LegalPro</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<style>
-  body {
-    font-family: Arial, sans-serif;
-    background: #0f172a;
-    color: white;
-    text-align: center;
-    padding: 40px;
-  }
-  button {
-    margin-top: 20px;
-    padding: 14px 24px;
-    font-size: 18px;
-    border-radius: 12px;
-    border: none;
-    background: #22c55e;
-    color: black;
-    cursor: pointer;
-  }
-</style>
 </head>
-<body>
+<body style="background:#0f172a;color:white;text-align:center;padding:40px;font-family:Arial">
 
 <h1>LegalPro</h1>
 <p id="status">Авторизация...</p>
-<button onclick="generateDoc()">Сгенерировать документ</button>
+<button onclick="generateDoc()" style="padding:15px 25px;border-radius:10px;border:none;background:#22c55e;color:black;font-size:18px">
+Сгенерировать документ
+</button>
 
 <script>
-  function setStatus(text) {
-    document.getElementById('status').innerText = text;
+function setStatus(t){document.getElementById('status').innerText=t;}
+
+async function login(){
+ try{
+  if(!window.Telegram||!window.Telegram.WebApp){
+   setStatus("Открыто вне Telegram");
+   return;
   }
+  const tg=window.Telegram.WebApp;
+  tg.expand();
+  if(!tg.initData){setStatus("Нет initData");return;}
 
-  async function login() {
-    try {
-      if (!window.Telegram || !window.Telegram.WebApp) {
-        setStatus("Открыто вне Telegram WebApp");
-        alert("window.Telegram не найден");
-        return;
-      }
+  const r=await fetch('/api/auth/telegram',{
+   method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({initData:tg.initData})
+  });
 
-      const tg = window.Telegram.WebApp;
-      tg.expand();
+  const d=await r.json();
 
-      // 🔥 Проверяем initData
-      if (!tg.initData) {
-        setStatus("initData пустой");
-        alert("INIT DATA ПУСТОЙ");
-        return;
-      }
-
-      alert("INIT DATA OK");
-
-      const response = await fetch('/api/auth/telegram', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData: tg.initData })
-      });
-
-      const data = await response.json();
-      alert("Ответ сервера: " + JSON.stringify(data));
-
-      if (data.token) {
-        localStorage.setItem('token', data.token);
-        setStatus("Вы авторизованы");
-      } else {
-        setStatus("Ошибка авторизации");
-      }
-
-    } catch (e) {
-      alert("ERROR: " + e.message);
-      setStatus("Ошибка соединения");
-    }
+  if(d.token){
+   localStorage.setItem('token',d.token);
+   setStatus("Вы авторизованы");
+  }else{
+   setStatus("Ошибка авторизации");
   }
+ }catch(e){
+  setStatus("Ошибка соединения");
+ }
+}
 
-  async function generateDoc() {
-    try {
-      const token = localStorage.getItem('token');
+async function generateDoc(){
+ const token=localStorage.getItem('token');
+ if(!token){alert("Нет токена");return;}
 
-      if (!token) {
-        alert("Нет токена. Перезапустите WebApp.");
-        return;
-      }
-
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + token
-        }
-      });
-
-      if (response.ok) {
-        const text = await response.text();
-        alert(text);
-      } else {
-        const err = await response.json();
-        alert(err.error || "Ошибка");
-      }
-
-    } catch (e) {
-      alert("Ошибка соединения");
-    }
+ const r=await fetch('/api/generate',{
+  method:'POST',
+  headers:{
+   'Content-Type':'application/json',
+   'Authorization':'Bearer '+token
   }
+ });
 
-  login();
+ if(r.ok){
+  const t=await r.text();
+  alert(t);
+ }else{
+  const e=await r.json();
+  alert(e.error||"Ошибка");
+ }
+}
+
+login();
 </script>
 </body>
 </html>
-  `);
+`);
 });
 
 /* ==============================
@@ -166,7 +125,7 @@ function auth(req, res, next) {
 }
 
 /* ==============================
-   TELEGRAM SIGNATURE VALIDATION
+   TELEGRAM VALIDATION
 ============================== */
 
 function validateTelegramData(initData) {
@@ -207,19 +166,12 @@ app.get('/api/health', (req, res) => {
 ============================== */
 
 app.post('/api/auth/telegram', async (req, res) => {
-  console.log("BODY:", req.body);
-  console.log("INIT DATA:", req.body?.initData);
-
   try {
     const { initData } = req.body;
+    if (!initData) return res.status(400).json({ error: 'No initData' });
 
-    if (!initData) {
-      return res.status(400).json({ error: 'No initData' });
-    }
-
-    if (!validateTelegramData(initData)) {
+    if (!validateTelegramData(initData))
       return res.status(403).json({ error: 'Invalid Telegram signature' });
-    }
 
     const params = new URLSearchParams(initData);
     const tgUser = JSON.parse(params.get('user'));
@@ -261,7 +213,7 @@ app.post('/api/auth/telegram', async (req, res) => {
 });
 
 /* ==============================
-   GENERATE DOCUMENT
+   GENERATE
 ============================== */
 
 app.post('/api/generate', auth, async (req, res) => {
@@ -270,37 +222,18 @@ app.post('/api/generate', auth, async (req, res) => {
       where: { id: req.user.userId }
     });
 
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const currentCount = user.generationCount || 0;
-
-    if (currentCount >= 2) {
-      return res.status(403).json({
-        error: 'Free limit exceeded'
-      });
-    }
+    if ((user.generationCount || 0) >= 2)
+      return res.status(403).json({ error: 'Free limit exceeded' });
 
     await prisma.user.update({
       where: { id: user.id },
       data: { generationCount: { increment: 1 } }
     });
 
-    const now = new Date();
-
-    const documentText = `
-ДОСУДЕБНАЯ ПРЕТЕНЗИЯ
-
-Дата: ${now.toLocaleDateString()}
-
-Текст претензии формируется автоматически...
-
-LegalPro
-`;
-
     res.set('Content-Type', 'text/plain; charset=utf-8');
-    res.send(documentText);
+    res.send("Документ создан успешно.");
 
   } catch (e) {
     console.error(e);
@@ -309,26 +242,35 @@ LegalPro
 });
 
 /* ==============================
-   404
-============================== */
-
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
-});
-
-/* ==============================
-   START
+   AUTO DB INIT + START
 ============================== */
 
 const PORT = process.env.PORT || 8080;
 
-prisma.$connect()
-  .then(() => {
-    app.listen(PORT, () =>
-      console.log(`✓ Server running on port ${PORT}`)
-    );
-  })
-  .catch(e => {
-    console.error('Database error:', e.message);
-    process.exit(1);
-  });
+async function start() {
+  try {
+    console.log("Checking database...");
+
+    await prisma.$connect();
+    await prisma.$queryRaw`SELECT 1`;
+
+  } catch (e) {
+    console.log("Database not ready. Running prisma db push...");
+    await new Promise((resolve, reject) => {
+      exec('npx prisma db push', (err, stdout, stderr) => {
+        console.log(stdout);
+        console.log(stderr);
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+  }
+
+  await prisma.$connect();
+
+  app.listen(PORT, () =>
+    console.log(`✓ Server running on port ${PORT}`)
+  );
+}
+
+start();
