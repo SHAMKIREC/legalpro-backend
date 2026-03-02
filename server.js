@@ -196,6 +196,9 @@ app.get('/api/health', (req, res) => {
 ============================== */
 
 app.post('/api/auth/telegram', async (req, res) => {
+  console.log("BODY:", req.body);
+  console.log("INIT DATA:", req.body?.initData);
+
   try {
     const { initData } = req.body;
 
