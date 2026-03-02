@@ -16,18 +16,6 @@ app.use(cors());
 app.use(express.json());
 
 /* ==============================
-   ROOT ROUTE
-============================== */
-
-app.get('/', (req, res) => {
-  res.json({
-    name: 'LegalPro API',
-    status: 'running',
-    version: '1.0.0'
-  });
-});
-
-/* ==============================
    LOGGER
 ============================== */
 
@@ -37,34 +25,93 @@ app.use((req, res, next) => {
 });
 
 /* ==============================
-   TELEGRAM WEBAPP TEST PAGE
+   ROOT = TELEGRAM WEBAPP PAGE
 ============================== */
 
-app.get('/webapp-test', (req, res) => {
+app.get('/', (req, res) => {
   res.send(`
-    <html>
-      <body>
-        <h2>LegalPro Telegram Auth Test</h2>
-        <script src="https://telegram.org/js/telegram-web-app.js"></script>
-        <script>
-          const tg = window.Telegram.WebApp;
-          tg.expand();
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>LegalPro</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #0f172a;
+    color: white;
+    text-align: center;
+    padding: 40px;
+  }
+  button {
+    margin-top: 20px;
+    padding: 14px 24px;
+    font-size: 18px;
+    border-radius: 12px;
+    border: none;
+    background: #22c55e;
+    color: black;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
 
-          fetch('/api/auth/telegram', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ initData: tg.initData })
-          })
-          .then(r => r.json())
-          .then(d => {
-            document.body.innerHTML = '<pre>' + JSON.stringify(d, null, 2) + '</pre>';
-          })
-          .catch(e => {
-            document.body.innerHTML = 'Error: ' + e.message;
-          });
-        </script>
-      </body>
-    </html>
+<h1>LegalPro</h1>
+<p id="status">Авторизация...</p>
+<button onclick="generateDoc()">Сгенерировать документ</button>
+
+<script>
+  const tg = window.Telegram.WebApp;
+  tg.expand();
+
+  async function login() {
+    try {
+      const response = await fetch('/api/auth/telegram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData: tg.initData })
+      });
+
+      const data = await response.json();
+
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+        document.getElementById('status').innerText = "Вы авторизованы";
+      } else {
+        document.getElementById('status').innerText = "Ошибка авторизации";
+      }
+    } catch (e) {
+      document.getElementById('status').innerText = "Ошибка соединения";
+    }
+  }
+
+  async function generateDoc() {
+    const token = localStorage.getItem('token');
+
+    const response = await fetch('/api/generate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      }
+    });
+
+    if (response.ok) {
+      const text = await response.text();
+      alert(text);
+    } else {
+      const err = await response.json();
+      alert(err.error);
+    }
+  }
+
+  login();
+</script>
+
+</body>
+</html>
   `);
 });
 
@@ -79,7 +126,7 @@ function auth(req, res, next) {
   try {
     req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
-  } catch (e) {
+  } catch {
     return res.status(403).json({ error: 'Invalid token' });
   }
 }
@@ -112,7 +159,7 @@ function validateTelegramData(initData) {
 }
 
 /* ==============================
-   HEALTH CHECK
+   HEALTH
 ============================== */
 
 app.get('/api/health', (req, res) => {
@@ -126,7 +173,6 @@ app.get('/api/health', (req, res) => {
 app.post('/api/auth/telegram', async (req, res) => {
   try {
     const { initData } = req.body;
-
     if (!initData) {
       return res.status(400).json({ error: 'No initData' });
     }
@@ -175,18 +221,6 @@ app.post('/api/auth/telegram', async (req, res) => {
 });
 
 /* ==============================
-   TOKEN VALIDATION
-============================== */
-
-app.get('/api/auth/validate', auth, async (req, res) => {
-  const user = await prisma.user.findUnique({
-    where: { id: req.user.userId }
-  });
-
-  res.json({ user });
-});
-
-/* ==============================
    GENERATE DOCUMENT
 ============================== */
 
@@ -197,12 +231,10 @@ app.post('/api/generate', auth, async (req, res) => {
     });
 
     const now = new Date();
-    const isProActive = user.proUntil && user.proUntil > now;
 
-    if (!isProActive && user.generationCount >= 2) {
+    if (user.generationCount >= 2) {
       return res.status(403).json({
-        error: 'Free limit exceeded',
-        redirectToPricing: true
+        error: 'Free limit exceeded'
       });
     }
 
@@ -221,11 +253,6 @@ app.post('/api/generate', auth, async (req, res) => {
 LegalPro
 `;
 
-    res.set(
-      'Content-Disposition',
-      \`attachment; filename="pretension_\${Date.now()}.txt"\`
-    );
-
     res.send(documentText);
 
   } catch (e) {
@@ -234,7 +261,7 @@ LegalPro
 });
 
 /* ==============================
-   404 HANDLER
+   404
 ============================== */
 
 app.use((req, res) => {
@@ -242,7 +269,7 @@ app.use((req, res) => {
 });
 
 /* ==============================
-   START SERVER
+   START
 ============================== */
 
 const PORT = process.env.PORT || 5555;
@@ -250,7 +277,7 @@ const PORT = process.env.PORT || 5555;
 prisma.$connect()
   .then(() => {
     app.listen(PORT, () =>
-      console.log(\`✓ Server running on port \${PORT}\`)
+      console.log(`✓ Server running on port ${PORT}`)
     );
   })
   .catch(e => {
