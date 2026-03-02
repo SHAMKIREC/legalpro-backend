@@ -74,11 +74,21 @@ app.get('/', (req, res) => {
     try {
       if (!window.Telegram || !window.Telegram.WebApp) {
         setStatus("Открыто вне Telegram WebApp");
+        alert("window.Telegram не найден");
         return;
       }
 
       const tg = window.Telegram.WebApp;
       tg.expand();
+
+      // 🔥 Проверяем initData
+      if (!tg.initData) {
+        setStatus("initData пустой");
+        alert("INIT DATA ПУСТОЙ");
+        return;
+      }
+
+      alert("INIT DATA OK");
 
       const response = await fetch('/api/auth/telegram', {
         method: 'POST',
@@ -87,6 +97,7 @@ app.get('/', (req, res) => {
       });
 
       const data = await response.json();
+      alert("Ответ сервера: " + JSON.stringify(data));
 
       if (data.token) {
         localStorage.setItem('token', data.token);
@@ -96,6 +107,7 @@ app.get('/', (req, res) => {
       }
 
     } catch (e) {
+      alert("ERROR: " + e.message);
       setStatus("Ошибка соединения");
     }
   }
@@ -132,7 +144,6 @@ app.get('/', (req, res) => {
 
   login();
 </script>
-
 </body>
 </html>
   `);
@@ -206,9 +217,9 @@ app.post('/api/auth/telegram', async (req, res) => {
       return res.status(400).json({ error: 'No initData' });
     }
 
-    //if (!validateTelegramData(initData)) {
-    //return res.status(403).json({ error: 'Invalid Telegram signature' });
-    //}
+    if (!validateTelegramData(initData)) {
+      eturn res.status(403).json({ error: 'Invalid Telegram signature' });
+    }
 
     const params = new URLSearchParams(initData);
     const tgUser = JSON.parse(params.get('user'));
