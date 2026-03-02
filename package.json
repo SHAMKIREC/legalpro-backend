@@ -4,16 +4,12 @@
   "main": "server.js",
   "scripts": {
     "dev": "node scripts/dev.js",
-    "start": "prisma migrate deploy && node --enable-source-maps server.js",
+
+    "prestart": "npx prisma db push",
+    "start": "node --enable-source-maps server.js",
+
     "worker": "node worker/pdfWorker.js",
-
-    "postinstall": "prisma generate && prisma migrate deploy",
-
-    "migrate": "prisma migrate deploy",
-    "migrate:dev": "prisma migrate dev",
     "generate": "prisma generate",
-    "init-db": "node scripts/init-db.js",
-    "secrets": "node scripts/generate-secrets.js",
     "studio": "prisma studio",
     "test": "jest --detectOpenHandles",
     "lint": "eslint . --ext .js",
