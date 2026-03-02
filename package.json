@@ -4,7 +4,7 @@
   "main": "server.js",
   "scripts": {
     "dev": "node scripts/dev.js",
-    "start": "node --enable-source-maps server.js",
+    "start": "prisma migrate deploy && node --enable-source-maps server.js",
     "worker": "node worker/pdfWorker.js",
 
     "postinstall": "prisma generate && prisma migrate deploy",
