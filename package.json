@@ -1,0 +1,52 @@
+{
+  "name": "legalpro-backend",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "start": "node --enable-source-maps server.js",
+    "worker": "node worker/pdfWorker.js",
+    "migrate": "prisma migrate deploy",
+    "migrate:dev": "prisma migrate dev",
+    "generate": "prisma generate",
+    "init-db": "node scripts/init-db.js",
+    "secrets": "node scripts/generate-secrets.js",
+    "studio": "prisma studio",
+    "test": "jest --detectOpenHandles",
+    "lint": "eslint . --ext .js",
+    "format": "prettier --write \"**/*.js\""
+  },
+  "devDependencies": {
+    "eslint": "^8.52.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.1",
+    "prettier": "^3.0.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.2",
+    "@sparticuz/chromium": "^143.0.4",
+    "bcryptjs": "^3.0.3",
+    "bull": "^4.16.5",
+    "bullmq": "^5.70.1",
+    "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "express-mongo-sanitize": "^2.2.0",
+    "express-rate-limit": "^8.2.1",
+    "express-validator": "^7.3.1",
+    "express-winston": "^4.2.0",
+    "fs-extra": "^11.1.1",
+    "helmet": "^8.1.0",
+    "hpp": "^0.2.3",
+    "ioredis": "^5.10.0",
+    "jsonwebtoken": "^9.0.3",
+    "prisma": "^6.19.2",
+    "puppeteer-core": "^21.3.3",
+    "rate-limit-redis": "^4.3.1",
+    "redis": "^5.11.0",
+    "uuid": "^13.0.0",
+    "winston": "^3.19.0"
+  }
+}

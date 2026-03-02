@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String    @id @default(uuid())
+  telegramId      String    @unique
+  username        String?
+  firstName       String?
+  lastName        String?
+  photoUrl        String?
+  languageCode    String?
+  proStatus       Boolean   @default(false)
+  proActivatedAt  DateTime?
+  generationCount Int       @default(0)
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  refreshTokens   RefreshToken[]
+  generationJobs  GenerationJob[]
+  securityLogs    SecurityLog[]
+  payments        Payment[]
+  
+  @@index([telegramId])
+  @@index([proStatus])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  token     String    @unique // In production, store hash only
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+  
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([token])
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model GenerationJob {
+  id              String   @id @default(uuid())
+  userId          String
+  status          String   // pending, processing, completed, failed
+  claimType       String
+  format          String
+  claimData       String?  @db.Text  // JSON data for PDF generation
+  idempotencyKey  String?
+  estimatedSize   Int?
+  filePath        String?
+  fileSize        Int?
+  progress        Int      @default(0)
+  error           String?
+  createdAt       DateTime @default(now())
+  startedAt       DateTime?
+  completedAt     DateTime?
+  failedAt        DateTime?
+  
+  user            User     @relation(fields: [userId], references: [id])
+  
+  @@index([userId, status])
+  @@index([idempotencyKey])
+  @@index([createdAt])
+}
+
+model SecurityLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  type      String
+  ipAddress String
+  userAgent String?
+  details   String?  // JSON
+  requestId String?
+  createdAt DateTime @default(now())
+  
+  user      User?    @relation(fields: [userId], references: [id])
+  
+  @@index([type, createdAt])
+  @@index([ipAddress])
+}
+
+model Payment {
+  id            String   @id @default(uuid())
+  userId        String
+  amount        Decimal  @db.Decimal(10, 2)
+  currency      String   @default("RUB")
+  provider      String   // yookassa, etc.
+  providerRef   String?
+  status        String   // pending, completed, failed
+  metadata      String?  // JSON
+  createdAt     DateTime @default(now())
+  completedAt   DateTime?
+  
+  user          User     @relation(fields: [userId], references: [id])
+  
+  @@index([userId, status])
+  @@index([providerRef])
+}
+
+// Audit log for compliance
+model AuditLog {
+  id          String   @id @default(uuid())
+  tableName   String
+  recordId    String
+  action      String   // CREATE, UPDATE, DELETE
+  oldValues   String?  // JSON
+  newValues   String?  // JSON
+  performedBy String?
+  createdAt   DateTime @default(now())
+  
+  @@index([tableName, recordId])
+  @@index([createdAt])
+}
