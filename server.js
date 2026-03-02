@@ -218,7 +218,7 @@ app.post('/api/auth/telegram', async (req, res) => {
     }
 
     if (!validateTelegramData(initData)) {
-      eturn res.status(403).json({ error: 'Invalid Telegram signature' });
+      return res.status(403).json({ error: 'Invalid Telegram signature' });
     }
 
     const params = new URLSearchParams(initData);
