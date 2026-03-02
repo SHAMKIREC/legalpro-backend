@@ -1,4 +1,5 @@
 require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
@@ -29,6 +30,8 @@ app.use((req, res, next) => {
 ============================== */
 
 app.get('/', (req, res) => {
+  res.set('Content-Type', 'text/html; charset=utf-8');
+
   res.send(`
 <!DOCTYPE html>
 <html>
@@ -63,11 +66,20 @@ app.get('/', (req, res) => {
 <button onclick="generateDoc()">Сгенерировать документ</button>
 
 <script>
-  const tg = window.Telegram.WebApp;
-  tg.expand();
+  function setStatus(text) {
+    document.getElementById('status').innerText = text;
+  }
 
   async function login() {
     try {
+      if (!window.Telegram || !window.Telegram.WebApp) {
+        setStatus("Открыто вне Telegram WebApp");
+        return;
+      }
+
+      const tg = window.Telegram.WebApp;
+      tg.expand();
+
       const response = await fetch('/api/auth/telegram', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -78,32 +90,43 @@ app.get('/', (req, res) => {
 
       if (data.token) {
         localStorage.setItem('token', data.token);
-        document.getElementById('status').innerText = "Вы авторизованы";
+        setStatus("Вы авторизованы");
       } else {
-        document.getElementById('status').innerText = "Ошибка авторизации";
+        setStatus("Ошибка авторизации");
       }
+
     } catch (e) {
-      document.getElementById('status').innerText = "Ошибка соединения";
+      setStatus("Ошибка соединения");
     }
   }
 
   async function generateDoc() {
-    const token = localStorage.getItem('token');
+    try {
+      const token = localStorage.getItem('token');
 
-    const response = await fetch('/api/generate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + token
+      if (!token) {
+        alert("Нет токена. Перезапустите WebApp.");
+        return;
       }
-    });
 
-    if (response.ok) {
-      const text = await response.text();
-      alert(text);
-    } else {
-      const err = await response.json();
-      alert(err.error);
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        }
+      });
+
+      if (response.ok) {
+        const text = await response.text();
+        alert(text);
+      } else {
+        const err = await response.json();
+        alert(err.error || "Ошибка");
+      }
+
+    } catch (e) {
+      alert("Ошибка соединения");
     }
   }
 
@@ -136,6 +159,8 @@ function auth(req, res, next) {
 ============================== */
 
 function validateTelegramData(initData) {
+  if (!process.env.TELEGRAM_BOT_TOKEN) return false;
+
   const urlParams = new URLSearchParams(initData);
   const hash = urlParams.get('hash');
   urlParams.delete('hash');
@@ -173,6 +198,7 @@ app.get('/api/health', (req, res) => {
 app.post('/api/auth/telegram', async (req, res) => {
   try {
     const { initData } = req.body;
+
     if (!initData) {
       return res.status(400).json({ error: 'No initData' });
     }
@@ -216,7 +242,7 @@ app.post('/api/auth/telegram', async (req, res) => {
 
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -230,9 +256,13 @@ app.post('/api/generate', auth, async (req, res) => {
       where: { id: req.user.userId }
     });
 
-    const now = new Date();
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-    if (user.generationCount >= 2) {
+    const currentCount = user.generationCount || 0;
+
+    if (currentCount >= 2) {
       return res.status(403).json({
         error: 'Free limit exceeded'
       });
@@ -242,6 +272,8 @@ app.post('/api/generate', auth, async (req, res) => {
       where: { id: user.id },
       data: { generationCount: { increment: 1 } }
     });
+
+    const now = new Date();
 
     const documentText = `
 ДОСУДЕБНАЯ ПРЕТЕНЗИЯ
@@ -253,10 +285,12 @@ app.post('/api/generate', auth, async (req, res) => {
 LegalPro
 `;
 
+    res.set('Content-Type', 'text/plain; charset=utf-8');
     res.send(documentText);
 
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error(e);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -272,7 +306,7 @@ app.use((req, res) => {
    START
 ============================== */
 
-const PORT = process.env.PORT || 5555;
+const PORT = process.env.PORT || 8080;
 
 prisma.$connect()
   .then(() => {
