@@ -105,28 +105,26 @@ function validateTelegramData(initData) {
 /* ==============================
 TELEGRAM LOGIN
 ============================== */
-
 app.post("/api/auth/telegram", async (req, res) => {
 
   try {
 
-    const { initData } = req.body;
+    const {
+      telegramId,
+      username,
+      firstName,
+      lastName
+    } = req.body;
 
-    if (!initData) {
-      return res.status(400).json({ error: "No initData" });
+    if (!telegramId) {
+      return res.status(400).json({
+        error: "telegramId required"
+      });
     }
-
-    if (!validateTelegramData(initData)) {
-      return res.status(403).json({ error: "Invalid Telegram signature" });
-    }
-
-    const params = new URLSearchParams(initData);
-
-    const tgUser = JSON.parse(params.get("user"));
 
     let user = await prisma.user.findUnique({
       where: {
-        telegramId: String(tgUser.id)
+        telegramId: String(telegramId)
       }
     });
 
@@ -134,10 +132,10 @@ app.post("/api/auth/telegram", async (req, res) => {
 
       user = await prisma.user.create({
         data: {
-          telegramId: String(tgUser.id),
-          username: tgUser.username || "",
-          firstName: tgUser.first_name || "",
-          lastName: tgUser.last_name || "",
+          telegramId: String(telegramId),
+          username: username || "",
+          firstName: firstName || "",
+          lastName: lastName || "",
           generationCount: 0,
           lastLoginAt: new Date()
         }
@@ -147,7 +145,7 @@ app.post("/api/auth/telegram", async (req, res) => {
 
       user = await prisma.user.update({
         where: {
-          telegramId: String(tgUser.id)
+          telegramId: String(telegramId)
         },
         data: {
           lastLoginAt: new Date()
