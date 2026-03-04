@@ -2,10 +2,8 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const crypto = require('crypto');
 const { PrismaClient } = require('@prisma/client');
 const jwt = require('jsonwebtoken');
-const { exec } = require('child_process');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -36,119 +34,85 @@ app.use((req, res, next) => {
 });
 
 /* ==============================
-HEALTH CHECK
+HEALTH
 ============================== */
 
-app.get('/api/health', (req, res) => {
-  res.json({ status: "ok" });
+app.get("/api/health", (req,res)=>{
+  res.json({status:"ok"});
 });
 
 /* ==============================
 AUTH MIDDLEWARE
 ============================== */
 
-function auth(req, res, next) {
+function auth(req,res,next){
 
   const token = req.headers.authorization?.split(" ")[1];
 
-  if (!token) {
-    return res.status(401).json({ error: "No token" });
+  if(!token){
+    return res.status(401).json({error:"No token"});
   }
 
-  try {
+  try{
 
     req.user = jwt.verify(token, process.env.JWT_SECRET);
 
     next();
 
-  } catch {
+  }catch(e){
 
-    return res.status(403).json({ error: "Invalid token" });
+    return res.status(403).json({error:"Invalid token"});
 
   }
-
-}
-
-/* ==============================
-TELEGRAM DATA VALIDATION
-============================== */
-
-function validateTelegramData(initData) {
-
-  if (!process.env.TELEGRAM_BOT_TOKEN) return false;
-
-  const urlParams = new URLSearchParams(initData);
-
-  const hash = urlParams.get("hash");
-
-  urlParams.delete("hash");
-
-  const dataCheckString = Array.from(urlParams.entries())
-    .sort()
-    .map(([key, value]) => `${key}=${value}`)
-    .join("\n");
-
-  const secretKey = crypto
-    .createHmac("sha256", "WebAppData")
-    .update(process.env.TELEGRAM_BOT_TOKEN)
-    .digest();
-
-  const calculatedHash = crypto
-    .createHmac("sha256", secretKey)
-    .update(dataCheckString)
-    .digest("hex");
-
-  return calculatedHash === hash;
 
 }
 
 /* ==============================
 TELEGRAM LOGIN
 ============================== */
-app.post("/api/auth/telegram", async (req, res) => {
 
-  try {
+app.post("/api/auth/telegram", async (req,res)=>{
 
-    const {
-      telegramId,
-      username,
-      firstName,
-      lastName
-    } = req.body;
+  try{
 
-    if (!telegramId) {
+    console.log("BODY:", req.body);
+
+    const {telegramId,username,firstName,lastName} = req.body;
+
+    if(!telegramId){
       return res.status(400).json({
-        error: "telegramId required"
+        error:"telegramId required"
       });
     }
 
     let user = await prisma.user.findUnique({
-      where: {
-        telegramId: String(telegramId)
+      where:{
+        telegramId:String(telegramId)
       }
     });
 
-    if (!user) {
+    if(!user){
 
       user = await prisma.user.create({
-        data: {
-          telegramId: String(telegramId),
-          username: username || "",
-          firstName: firstName || "",
-          lastName: lastName || "",
-          generationCount: 0,
-          lastLoginAt: new Date()
+        data:{
+          telegramId:String(telegramId),
+          username:username || "",
+          firstName:firstName || "",
+          lastName:lastName || "",
+          generationCount:0,
+          lastLoginAt:new Date(),
+          proStatus:false
         }
       });
 
-    } else {
+    }else{
 
       user = await prisma.user.update({
-        where: {
-          telegramId: String(telegramId)
+        where:{
+          telegramId:String(telegramId)
         },
-        data: {
-          lastLoginAt: new Date()
+        data:{
+          lastLoginAt:new Date()
         }
       });
 
@@ -156,24 +120,25 @@ app.post("/api/auth/telegram", async (req, res) => {
 
     const token = jwt.sign(
       {
-        userId: user.id,
-        telegramId: user.telegramId
+        userId:user.id,
+        telegramId:user.telegramId
       },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      {expiresIn:"7d"}
     );
 
     res.json({
+      success:true,
       user,
       token
     });
 
-  } catch (e) {
+  }catch(e){
 
     console.error(e);
 
     res.status(500).json({
-      error: "Server error"
+      error:"Server error"
     });
 
   }
@@ -184,32 +149,30 @@ app.post("/api/auth/telegram", async (req, res) => {
 TOKEN VALIDATION
 ============================== */
 
-app.get("/api/auth/validate", auth, async (req, res) => {
+app.get("/api/auth/validate", auth, async (req,res)=>{
 
-  try {
+  try{
 
     const user = await prisma.user.findUnique({
-      where: {
-        id: req.user.userId
+      where:{
+        id:req.user.userId
       }
     });
 
-    if (!user) {
+    if(!user){
       return res.status(404).json({
-        error: "User not found"
+        error:"User not found"
       });
     }
 
-    res.json({
-      user
-    });
+    res.json({user});
 
-  } catch (e) {
+  }catch(e){
 
     console.error(e);
 
     res.status(500).json({
-      error: "Server error"
+      error:"Server error"
     });
 
   }
@@ -220,53 +183,64 @@ app.get("/api/auth/validate", auth, async (req, res) => {
 GENERATE DOCUMENT
 ============================== */
 
-app.post("/api/generate", auth, async (req, res) => {
+app.post("/api/generate", auth, async (req,res)=>{
 
-  try {
+  try{
 
     const user = await prisma.user.findUnique({
-      where: {
-        id: req.user.userId
+      where:{
+        id:req.user.userId
       }
     });
 
-    if (!user) {
+    if(!user){
       return res.status(404).json({
-        error: "User not found"
+        error:"User not found"
       });
     }
 
-    if ((user.generationCount || 0) >= 2) {
+    if((user.generationCount || 0) >= 2){
+
       return res.status(403).json({
-        error: "Free limit exceeded"
+        error:"Free limit exceeded"
       });
+
     }
 
     await prisma.user.update({
-      where: {
-        id: user.id
+      where:{
+        id:user.id
       },
-      data: {
-        generationCount: {
-          increment: 1
+      data:{
+        generationCount:{
+          increment:1
         }
       }
     });
 
-    res.set("Content-Type","text/plain; charset=utf-8");
+    res.json({
+      success:true,
+      message:"Документ успешно создан"
+    });
 
-    res.send("Документ успешно создан");
-
-  } catch (e) {
+  }catch(e){
 
     console.error(e);
 
     res.status(500).json({
-      error: "Server error"
+      error:"Server error"
     });
 
   }
 
+});
+
+/* ==============================
+404
+============================== */
+
+app.use((req,res)=>{
+  res.status(404).json({error:"Route not found"});
 });
 
 /* ==============================
@@ -275,43 +249,25 @@ START SERVER
 
 const PORT = process.env.PORT || 8080;
 
-async function start() {
+async function start(){
 
-  try {
+  try{
 
-    console.log("Checking database...");
+    console.log("Connecting DB...");
 
     await prisma.$connect();
 
-    await prisma.$queryRaw`SELECT 1`;
+    console.log("DB connected");
 
-  } catch (e) {
+  }catch(e){
 
-    console.log("Database not ready. Running prisma db push...");
-
-    await new Promise((resolve, reject) => {
-
-      exec("npx prisma db push", (err, stdout, stderr) => {
-
-        console.log(stdout);
-
-        console.log(stderr);
-
-        if (err) reject(err);
-
-        else resolve();
-
-      });
-
-    });
+    console.error("DB error",e);
 
   }
 
-  await prisma.$connect();
+  app.listen(PORT,()=>{
 
-  app.listen(PORT, () => {
-
-    console.log(`✓ Server running on port ${PORT}`);
+    console.log("✓ Server running on port",PORT);
 
   });
 
