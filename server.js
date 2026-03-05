@@ -5,6 +5,9 @@ const cors = require('cors')
 const { PrismaClient } = require('@prisma/client')
 const jwt = require('jsonwebtoken')
 
+const PDFDocument = require('pdfkit')
+const { Document, Packer, Paragraph, TextRun } = require("docx")
+
 const app = express()
 const prisma = new PrismaClient()
 
@@ -56,7 +59,6 @@ function auth(req,res,next){
   try{
 
     req.user = jwt.verify(token,process.env.JWT_SECRET)
-
     next()
 
   }catch(e){
@@ -68,57 +70,33 @@ function auth(req,res,next){
 }
 
 /* ==============================
-LOGIN / REGISTRATION
+TELEGRAM LOGIN
 ============================== */
 
-app.post("/api/auth/telegram", async (req,res)=>{
+app.get("/api/auth/telegram-login", async (req,res)=>{
 
   try{
 
-    console.log("AUTH BODY:",req.body)
+    const { id, username, first_name, last_name } = req.query
 
-    const {
-      telegramId,
-      username,
-      firstName,
-      lastName
-    } = req.body
-
-    if(!telegramId){
-
-      return res.status(400).json({
-        error:"telegramId required"
-      })
-
+    if(!id){
+      return res.status(400).send("Telegram login error")
     }
 
     let user = await prisma.user.findUnique({
-      where:{
-        telegramId:String(telegramId)
-      }
+      where:{ telegramId:String(id) }
     })
 
     if(!user){
 
       user = await prisma.user.create({
         data:{
-          telegramId:String(telegramId),
+          telegramId:String(id),
           username:username || "",
-          firstName:firstName || "",
-          lastName:lastName || "",
+          firstName:first_name || "",
+          lastName:last_name || "",
           generationCount:0,
           proStatus:false,
-          lastLoginAt:new Date()
-        }
-      })
-
-    }else{
-
-      user = await prisma.user.update({
-        where:{
-          telegramId:String(telegramId)
-        },
-        data:{
           lastLoginAt:new Date()
         }
       })
@@ -131,24 +109,15 @@ app.post("/api/auth/telegram", async (req,res)=>{
         telegramId:user.telegramId
       },
       process.env.JWT_SECRET,
-      {
-        expiresIn:"7d"
-      }
+      {expiresIn:"7d"}
     )
 
-    res.json({
-      success:true,
-      user,
-      token
-    })
+    res.redirect(`https://shamkirec.github.io/legalpro-site/?token=${token}`)
 
   }catch(e){
 
-    console.error("AUTH ERROR:",e)
-
-    res.status(500).json({
-      error:"Server error"
-    })
+    console.error(e)
+    res.status(500).send("Auth error")
 
   }
 
@@ -163,26 +132,14 @@ app.get("/api/auth/validate",auth,async(req,res)=>{
   try{
 
     const user = await prisma.user.findUnique({
-      where:{
-        id:req.user.userId
-      }
+      where:{ id:req.user.userId }
     })
-
-    if(!user){
-      return res.status(404).json({
-        error:"User not found"
-      })
-    }
 
     res.json({user})
 
   }catch(e){
 
-    console.error(e)
-
-    res.status(500).json({
-      error:"Server error"
-    })
+    res.status(500).json({error:"Server error"})
 
   }
 
@@ -197,53 +154,109 @@ app.post("/api/generate",auth,async(req,res)=>{
   try{
 
     const user = await prisma.user.findUnique({
-      where:{
-        id:req.user.userId
-      }
+      where:{ id:req.user.userId }
     })
 
     if(!user){
-      return res.status(404).json({
-        error:"User not found"
-      })
+      return res.status(404).json({error:"User not found"})
     }
 
-    /* FREE LIMIT */
+    if(!user.proStatus && user.generationCount >= 2){
+      return res.status(403).json({error:"Free limit exceeded"})
+    }
 
     if(!user.proStatus){
 
-      if((user.generationCount || 0) >= 2){
-
-        return res.status(403).json({
-          error:"Free limit exceeded"
-        })
-
-      }
-
       await prisma.user.update({
-        where:{
-          id:user.id
-        },
-        data:{
-          generationCount:{
-            increment:1
-          }
-        }
+        where:{id:user.id},
+        data:{ generationCount:{increment:1} }
       })
 
     }
 
-    res.json({
-      success:true,
-      message:"Документ успешно создан"
-    })
+    const { claimData, format } = req.body
+
+    const text = `
+ДОСУДЕБНАЯ ПРЕТЕНЗИЯ
+
+Ответчик:
+${claimData.employer?.name}
+
+Адрес:
+${claimData.employer?.address}
+
+Заявитель:
+${claimData.workers?.map(w=>w.name).join(", ")}
+
+Описание:
+${claimData.circumstances?.description}
+
+Требование:
+Прошу погасить задолженность.
+`
+
+    /* PDF */
+
+    if(format === "pdf"){
+
+      const doc = new PDFDocument()
+
+      res.setHeader("Content-Type","application/pdf")
+      res.setHeader("Content-Disposition","attachment; filename=pretension.pdf")
+
+      doc.pipe(res)
+
+      doc.fontSize(14).text(text)
+
+      doc.end()
+
+      return
+
+    }
+
+    /* DOCX */
+
+    if(format === "docx"){
+
+      const doc = new Document({
+        sections:[
+          {
+            properties:{},
+            children:[
+              new Paragraph({
+                children:[
+                  new TextRun({
+                    text:text,
+                    size:24
+                  })
+                ]
+              })
+            ]
+          }
+        ]
+      })
+
+      const buffer = await Packer.toBuffer(doc)
+
+      res.setHeader(
+        "Content-Disposition",
+        "attachment; filename=pretension.docx"
+      )
+
+      res.send(buffer)
+
+      return
+
+    }
+
+    res.status(400).json({error:"Invalid format"})
 
   }catch(e){
 
     console.error(e)
 
     res.status(500).json({
-      error:"Server error"
+      error:"Generation error"
     })
 
   }
@@ -255,9 +268,7 @@ app.post("/api/generate",auth,async(req,res)=>{
 ============================== */
 
 app.use((req,res)=>{
-  res.status(404).json({
-    error:"Route not found"
-  })
+  res.status(404).json({error:"Route not found"})
 })
 
 /* ==============================
@@ -268,22 +279,10 @@ const PORT = process.env.PORT || 8080
 
 async function start(){
 
-  try{
-
-    console.log("Connecting DB...")
-
-    await prisma.$connect()
-
-    console.log("DB connected")
-
-  }catch(e){
-
-    console.error("DB error",e)
-
-  }
+  await prisma.$connect()
 
   app.listen(PORT,()=>{
-    console.log("✓ Server running on port",PORT)
+    console.log("✓ Server running on",PORT)
   })
 
 }
