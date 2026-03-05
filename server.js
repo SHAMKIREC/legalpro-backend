@@ -59,7 +59,6 @@ function auth(req,res,next){
   try{
 
     req.user = jwt.verify(token,process.env.JWT_SECRET)
-
     next()
 
   }catch(e){
@@ -78,24 +77,32 @@ app.get("/api/auth/telegram-login", async (req,res)=>{
 
   try{
 
-    const { id, username, first_name, last_name } = req.query
+    const query = req.query
 
-    if(!id){
-      return res.status(400).send("Telegram login error")
+    console.log("Telegram query:", query)
+
+    const telegramId = query.id || query.user_id
+
+    if(!telegramId){
+      return res.redirect("https://shamkirec.github.io/legalpro-site/?error=telegram")
     }
 
+    const username = query.username || ""
+    const firstName = query.first_name || ""
+    const lastName = query.last_name || ""
+
     let user = await prisma.user.findUnique({
-      where:{ telegramId:String(id) }
+      where:{ telegramId:String(telegramId) }
     })
 
     if(!user){
 
       user = await prisma.user.create({
         data:{
-          telegramId:String(id),
-          username:username || "",
-          firstName:first_name || "",
-          lastName:last_name || "",
+          telegramId:String(telegramId),
+          username:username,
+          firstName:firstName,
+          lastName:lastName,
           generationCount:0,
           proStatus:false,
           lastLoginAt:new Date()
@@ -105,7 +112,7 @@ app.get("/api/auth/telegram-login", async (req,res)=>{
     }else{
 
       user = await prisma.user.update({
-        where:{ telegramId:String(id) },
+        where:{ telegramId:String(telegramId) },
         data:{ lastLoginAt:new Date() }
       })
 
@@ -120,12 +127,13 @@ app.get("/api/auth/telegram-login", async (req,res)=>{
       {expiresIn:"7d"}
     )
 
-    res.redirect(`https://shamkirec.github.io/legalpro-site/?token=${token}`)
+    return res.redirect(`https://shamkirec.github.io/legalpro-site/?token=${token}`)
 
   }catch(e){
 
-    console.error(e)
-    res.status(500).send("Auth error")
+    console.error("Telegram login error:",e)
+
+    return res.redirect("https://shamkirec.github.io/legalpro-site/?error=server")
 
   }
 
@@ -220,7 +228,7 @@ PDF
 
       doc.pipe(res)
 
-      doc.fontSize(16).text("ДОСУДЕБНАЯ ПРЕТЕНЗИЯ")
+      doc.fontSize(18).text("ДОСУДЕБНАЯ ПРЕТЕНЗИЯ")
       doc.moveDown()
 
       doc.fontSize(12).text(text)
@@ -240,14 +248,13 @@ DOCX
       const doc = new Document({
         sections:[
           {
-            properties:{},
             children:[
               new Paragraph({
                 children:[
                   new TextRun({
                     text:"ДОСУДЕБНАЯ ПРЕТЕНЗИЯ",
                     bold:true,
-                    size:32
+                    size:36
                   })
                 ]
               }),
@@ -283,9 +290,7 @@ DOCX
 
     console.error(e)
 
-    res.status(500).json({
-      error:"Generation error"
-    })
+    res.status(500).json({error:"Generation error"})
 
   }
 
@@ -307,7 +312,17 @@ const PORT = process.env.PORT || 8080
 
 async function start(){
 
-  await prisma.$connect()
+  try{
+
+    await prisma.$connect()
+
+    console.log("DB connected")
+
+  }catch(e){
+
+    console.error("DB error",e)
+
+  }
 
   app.listen(PORT,()=>{
     console.log("✓ Server running on",PORT)
