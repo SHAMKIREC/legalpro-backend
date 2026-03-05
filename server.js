@@ -1,12 +1,12 @@
-require('dotenv').config();
+require('dotenv').config()
 
-const express = require('express');
-const cors = require('cors');
-const { PrismaClient } = require('@prisma/client');
-const jwt = require('jsonwebtoken');
+const express = require('express')
+const cors = require('cors')
+const { PrismaClient } = require('@prisma/client')
+const jwt = require('jsonwebtoken')
 
-const app = express();
-const prisma = new PrismaClient();
+const app = express()
+const prisma = new PrismaClient()
 
 /* ==============================
 CONFIG
@@ -20,26 +20,26 @@ app.use(cors({
   ],
   methods: ["GET","POST","PUT","DELETE"],
   allowedHeaders: ["Content-Type","Authorization"]
-}));
+}))
 
-app.use(express.json());
+app.use(express.json())
 
 /* ==============================
 LOGGER
 ============================== */
 
-app.use((req, res, next) => {
-  console.log(`[${req.method}] ${req.path}`);
-  next();
-});
+app.use((req,res,next)=>{
+  console.log(`[${req.method}] ${req.path}`)
+  next()
+})
 
 /* ==============================
 HEALTH
 ============================== */
 
-app.get("/api/health", (req,res)=>{
-  res.json({status:"ok"});
-});
+app.get("/api/health",(req,res)=>{
+  res.json({status:"ok"})
+})
 
 /* ==============================
 AUTH MIDDLEWARE
@@ -47,49 +47,56 @@ AUTH MIDDLEWARE
 
 function auth(req,res,next){
 
-  const token = req.headers.authorization?.split(" ")[1];
+  const token = req.headers.authorization?.split(" ")[1]
 
   if(!token){
-    return res.status(401).json({error:"No token"});
+    return res.status(401).json({error:"No token"})
   }
 
   try{
 
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = jwt.verify(token,process.env.JWT_SECRET)
 
-    next();
+    next()
 
   }catch(e){
 
-    return res.status(403).json({error:"Invalid token"});
+    return res.status(403).json({error:"Invalid token"})
 
   }
 
 }
 
 /* ==============================
-TELEGRAM LOGIN
+LOGIN / REGISTRATION
 ============================== */
 
 app.post("/api/auth/telegram", async (req,res)=>{
 
   try{
 
-    console.log("BODY:", req.body);
+    console.log("AUTH BODY:",req.body)
 
-    const {telegramId,username,firstName,lastName} = req.body;
+    const {
+      telegramId,
+      username,
+      firstName,
+      lastName
+    } = req.body
 
     if(!telegramId){
+
       return res.status(400).json({
         error:"telegramId required"
-      });
+      })
+
     }
 
     let user = await prisma.user.findUnique({
       where:{
         telegramId:String(telegramId)
       }
-    });
+    })
 
     if(!user){
 
@@ -100,10 +107,10 @@ app.post("/api/auth/telegram", async (req,res)=>{
           firstName:firstName || "",
           lastName:lastName || "",
           generationCount:0,
-          lastLoginAt:new Date(),
-          proStatus:false
+          proStatus:false,
+          lastLoginAt:new Date()
         }
-      });
+      })
 
     }else{
 
@@ -114,7 +121,7 @@ app.post("/api/auth/telegram", async (req,res)=>{
         data:{
           lastLoginAt:new Date()
         }
-      });
+      })
 
     }
 
@@ -124,32 +131,34 @@ app.post("/api/auth/telegram", async (req,res)=>{
         telegramId:user.telegramId
       },
       process.env.JWT_SECRET,
-      {expiresIn:"7d"}
-    );
+      {
+        expiresIn:"7d"
+      }
+    )
 
     res.json({
       success:true,
       user,
       token
-    });
+    })
 
   }catch(e){
 
-    console.error(e);
+    console.error("AUTH ERROR:",e)
 
     res.status(500).json({
       error:"Server error"
-    });
+    })
 
   }
 
-});
+})
 
 /* ==============================
 TOKEN VALIDATION
 ============================== */
 
-app.get("/api/auth/validate", auth, async (req,res)=>{
+app.get("/api/auth/validate",auth,async(req,res)=>{
 
   try{
 
@@ -157,33 +166,33 @@ app.get("/api/auth/validate", auth, async (req,res)=>{
       where:{
         id:req.user.userId
       }
-    });
+    })
 
     if(!user){
       return res.status(404).json({
         error:"User not found"
-      });
+      })
     }
 
-    res.json({user});
+    res.json({user})
 
   }catch(e){
 
-    console.error(e);
+    console.error(e)
 
     res.status(500).json({
       error:"Server error"
-    });
+    })
 
   }
 
-});
+})
 
 /* ==============================
-GENERATE DOCUMENT
+DOCUMENT GENERATION
 ============================== */
 
-app.post("/api/generate", auth, async (req,res)=>{
+app.post("/api/generate",auth,async(req,res)=>{
 
   try{
 
@@ -191,86 +200,92 @@ app.post("/api/generate", auth, async (req,res)=>{
       where:{
         id:req.user.userId
       }
-    });
+    })
 
     if(!user){
       return res.status(404).json({
         error:"User not found"
-      });
+      })
     }
 
-    if((user.generationCount || 0) >= 2){
+    /* FREE LIMIT */
 
-      return res.status(403).json({
-        error:"Free limit exceeded"
-      });
+    if(!user.proStatus){
 
-    }
+      if((user.generationCount || 0) >= 2){
 
-    await prisma.user.update({
-      where:{
-        id:user.id
-      },
-      data:{
-        generationCount:{
-          increment:1
-        }
+        return res.status(403).json({
+          error:"Free limit exceeded"
+        })
+
       }
-    });
+
+      await prisma.user.update({
+        where:{
+          id:user.id
+        },
+        data:{
+          generationCount:{
+            increment:1
+          }
+        }
+      })
+
+    }
 
     res.json({
       success:true,
       message:"Документ успешно создан"
-    });
+    })
 
   }catch(e){
 
-    console.error(e);
+    console.error(e)
 
     res.status(500).json({
       error:"Server error"
-    });
+    })
 
   }
 
-});
+})
 
 /* ==============================
 404
 ============================== */
 
 app.use((req,res)=>{
-  res.status(404).json({error:"Route not found"});
-});
+  res.status(404).json({
+    error:"Route not found"
+  })
+})
 
 /* ==============================
 START SERVER
 ============================== */
 
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 8080
 
 async function start(){
 
   try{
 
-    console.log("Connecting DB...");
+    console.log("Connecting DB...")
 
-    await prisma.$connect();
+    await prisma.$connect()
 
-    console.log("DB connected");
+    console.log("DB connected")
 
   }catch(e){
 
-    console.error("DB error",e);
+    console.error("DB error",e)
 
   }
 
   app.listen(PORT,()=>{
-
-    console.log("✓ Server running on port",PORT);
-
-  });
+    console.log("✓ Server running on port",PORT)
+  })
 
 }
 
-start();
+start()
