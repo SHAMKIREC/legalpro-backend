@@ -59,6 +59,7 @@ function auth(req,res,next){
   try{
 
     req.user = jwt.verify(token,process.env.JWT_SECRET)
+
     next()
 
   }catch(e){
@@ -101,6 +102,13 @@ app.get("/api/auth/telegram-login", async (req,res)=>{
         }
       })
 
+    }else{
+
+      user = await prisma.user.update({
+        where:{ telegramId:String(id) },
+        data:{ lastLoginAt:new Date() }
+      })
+
     }
 
     const token = jwt.sign(
@@ -134,6 +142,10 @@ app.get("/api/auth/validate",auth,async(req,res)=>{
     const user = await prisma.user.findUnique({
       where:{ id:req.user.userId }
     })
+
+    if(!user){
+      return res.status(404).json({error:"User not found"})
+    }
 
     res.json({user})
 
@@ -180,22 +192,24 @@ app.post("/api/generate",auth,async(req,res)=>{
 ДОСУДЕБНАЯ ПРЕТЕНЗИЯ
 
 Ответчик:
-${claimData.employer?.name}
+${claimData?.employer?.name || ""}
 
 Адрес:
-${claimData.employer?.address}
+${claimData?.employer?.address || ""}
 
 Заявитель:
-${claimData.workers?.map(w=>w.name).join(", ")}
+${claimData?.workers?.map(w=>w.name).join(", ") || ""}
 
-Описание:
-${claimData.circumstances?.description}
+Описание ситуации:
+${claimData?.circumstances?.description || ""}
 
 Требование:
-Прошу погасить задолженность.
+Прошу погасить задолженность и устранить нарушение закона.
 `
 
-    /* PDF */
+/* ==============================
+PDF
+============================== */
 
     if(format === "pdf"){
 
@@ -206,7 +220,10 @@ ${claimData.circumstances?.description}
 
       doc.pipe(res)
 
-      doc.fontSize(14).text(text)
+      doc.fontSize(16).text("ДОСУДЕБНАЯ ПРЕТЕНЗИЯ")
+      doc.moveDown()
+
+      doc.fontSize(12).text(text)
 
       doc.end()
 
@@ -214,7 +231,9 @@ ${claimData.circumstances?.description}
 
     }
 
-    /* DOCX */
+/* ==============================
+DOCX
+============================== */
 
     if(format === "docx"){
 
@@ -223,6 +242,15 @@ ${claimData.circumstances?.description}
           {
             properties:{},
             children:[
+              new Paragraph({
+                children:[
+                  new TextRun({
+                    text:"ДОСУДЕБНАЯ ПРЕТЕНЗИЯ",
+                    bold:true,
+                    size:32
+                  })
+                ]
+              }),
               new Paragraph({
                 children:[
                   new TextRun({
