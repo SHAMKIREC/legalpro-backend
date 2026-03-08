@@ -1,329 +1,774 @@
 require('dotenv').config()
 
 const express = require('express')
+const rateLimit = require('express-rate-limit')
 const cors = require('cors')
-const crypto = require('crypto')
 const path = require('path')
 const fs = require('fs')
 
 const { PrismaClient } = require('@prisma/client')
+const prisma = new PrismaClient()
 const jwt = require('jsonwebtoken')
 
 const PDFDocument = require('pdfkit')
 const { Document, Packer, Paragraph, TextRun } = require("docx")
 
-/* ============================= */
-if (!process.env.JWT_SECRET) {
-    console.error("JWT_SECRET not defined")
-    process.exit(1)
-}
-if (!process.env.BOT_TOKEN) {
-    console.error("BOT_TOKEN not defined")
-    process.exit(1)
-}
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args))
 
 const app = express()
-const prisma = new PrismaClient()
+const generateLimiter = rateLimit({
+windowMs: 60 * 1000,
+max: 10,
+message: { error: "Too many document generations" }
+})
 
-/* ==============================
-CONFIG
-============================== */
+const companySearchLimiter = rateLimit({
+windowMs: 60 * 1000,
+max: 20,
+message: { error: "Too many requests" }
+})
+
+const companyCache = new Map()
+
+/* ============================= */
+
+if (!process.env.JWT_SECRET) {
+console.error("JWT_SECRET not defined")
+process.exit(1)
+}
+
+if (!process.env.TELEGRAM_BOT_TOKEN) {
+console.error("TELEGRAM_BOT_TOKEN not defined")
+process.exit(1)
+}
+
+if (!process.env.DADATA_KEY) {
+console.warn("DADATA_KEY not defined")
+}
+
+/* ============================= */
+
 app.use(cors({
-    origin: [
-        "https://shamkirec.github.io",
-        "https://shamkirec.github.io/legalpro-site",
-        "http://localhost:3000"
-    ],
-    methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type", "Authorization"]
+origin:[
+"https://shamkirec.github.io",
+"https://shamkirec.github.io/legalpro-site",
+"http://localhost:3000"
+],
+methods:["GET","POST"],
+allowedHeaders:["Content-Type","Authorization"]
 }))
+
 app.use(express.json())
 
-/* ==============================
-LOGGER
-============================== */
-app.use((req, res, next) => {
-    console.log(`[${req.method}] ${req.path}`)
-    next()
-})
+/* =============================
+AUTH
+============================= */
 
-/* ==============================
-HEALTH
-============================== */
-app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" })
-})
+function auth(req,res,next){
 
-/* ==============================
-AUTH MIDDLEWARE
-============================== */
-function auth(req, res, next) {
-    const token = req.headers.authorization?.split(" ")[1]
-    if (!token) return res.status(401).json({ error: "No token" })
-    try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET)
-        next()
-    } catch (e) {
-        return res.status(403).json({ error: "Invalid token" })
-    }
+const token = req.headers.authorization?.split(" ")[1]
+
+if(!token) return res.status(401).json({error:"No token"})
+
+try{
+
+req.user = jwt.verify(token,process.env.JWT_SECRET)
+
+next()
+
+}catch(e){
+
+return res.status(403).json({error:"Invalid token"})
+
 }
 
-/* ==============================
-VERIFY TELEGRAM DATA
-============================== */
-function verifyTelegramAuth(data) {
-    const checkHash = data.hash
-    delete data.hash
-
-    const sorted = Object.keys(data)
-        .sort()
-        .map(k => `${k}=${data[k]}`)
-        .join('\n')
-
-    const secret = crypto
-        .createHash('sha256')
-        .update(process.env.BOT_TOKEN)
-        .digest()
-
-    const hmac = crypto
-        .createHmac('sha256', secret)
-        .update(sorted)
-        .digest('hex')
-
-    return hmac === checkHash
 }
 
-/* ==============================
-CHECK TELEGRAM CHANNEL SUBSCRIPTION
-============================== */
-async function checkSubscription(userId) {
-    try {
-        const url = `https://api.telegram.org/bot${process.env.BOT_TOKEN}/getChatMember?chat_id=@LegalProSupport&user_id=${userId}`
-        const r = await fetch(url)
-        const data = await r.json()
-        const status = data.result?.status
-        return (
-            status === "member" ||
-            status === "administrator" ||
-            status === "creator"
-        )
-    } catch (e) {
-        console.error("Subscription check error", e)
-        return false
-    }
+/* =============================
+EVIDENCE MAP
+============================= */
+
+const evidenceMap = {
+
+"Переписка в мессенджерах":
+"перепиской в мессенджерах с руководством",
+
+"Банковские переводы":
+"банковскими переводами денежных средств",
+
+"Журнал учета рабочего времени":
+"журналом учета рабочего времени",
+
+"Пропускная система":
+"пропускной системой или картой доступа",
+
+"Свидетельские показания":
+"свидетельскими показаниями",
+
+"Трудовой договор":
+"трудовым или гражданско-правовым договором"
+
 }
 
-/* ==============================
-TELEGRAM LOGIN
-============================== */
-app.get("/api/auth/telegram-login", async (req, res) => {
-    try {
-        const data = { ...req.query }
-        if (!verifyTelegramAuth({ ...data })) {
-            return res.status(403).send("Invalid Telegram auth")
-        }
+function generateEvidenceText(evidence){
 
-        const telegramId = data.id
-        const username = data.username || ""
-        const firstName = data.first_name || ""
-        const lastName = data.last_name || ""
+if(!evidence || evidence.length===0) return ""
 
-        // Проверяем подписку на канал
-        const subscribed = await checkSubscription(telegramId)
-        if (!subscribed) {
-            return res.redirect("https://shamkirec.github.io/legalpro-site/?error=subscribe")
-        }
+let text = "Факт выполнения работ подтверждается:\n\n"
 
-        let user = await prisma.user.findUnique({
-            where: { telegramId: String(telegramId) }
-        })
-
-        if (!user) {
-            user = await prisma.user.create({
-                data: {
-                    telegramId: String(telegramId),
-                    username: username,
-                    firstName: firstName,
-                    lastName: lastName,
-                    generationCount: 0,
-                    proStatus: false,
-                    lastLoginAt: new Date()
-                }
-            })
-        } else {
-            user = await prisma.user.update({
-                where: { telegramId: String(telegramId) },
-                data: { lastLoginAt: new Date() }
-            })
-        }
-
-        const token = jwt.sign(
-            { userId: user.id, telegramId: user.telegramId },
-            process.env.JWT_SECRET,
-            { expiresIn: "7d" }
-        )
-
-        return res.redirect(`https://shamkirec.github.io/legalpro-site/?token=${token}`)
-    } catch (e) {
-        console.error("Telegram login error", e)
-        return res.redirect("https://shamkirec.github.io/legalpro-site/?error=server")
-    }
+evidence.forEach(e=>{
+text += `— ${evidenceMap[e] || e};\n`
 })
 
-/* ==============================
-TOKEN VALIDATION
-============================== */
-app.get("/api/auth/validate", auth, async (req, res) => {
-    try {
-        const user = await prisma.user.findUnique({
-            where: { id: req.user.userId }
-        })
-        if (!user) return res.status(404).json({ error: "User not found" })
-        res.json({ user })
-    } catch (e) {
-        res.status(500).json({ error: "Server error" })
-    }
-})
+return text
 
-/* ==============================
-DOCUMENT GENERATION
-============================== */
-app.post("/api/generate", auth, async (req, res) => {
-    try {
-        const user = await prisma.user.findUnique({
-            where: { id: req.user.userId }
-        })
-        if (!user) return res.status(404).json({ error: "User not found" })
+}
 
-        // Проверка лимита для free
-        if (!user.proStatus && user.generationCount >= 2) {
-            return res.status(403).json({ error: "Free limit exceeded" })
-        }
+/* =============================
+LAW BLOCK
+============================= */
 
-        const { claimData, format } = req.body
+function generateLawBlock(category){
 
-        // DOCX только для PRO
-        if (format === "docx" && !user.proStatus) {
-            return res.status(403).json({ error: "PRO required" })
-        }
+if(category==="salary"){
 
-        // Увеличиваем счётчик, если не PRO
-        if (!user.proStatus) {
-            await prisma.user.update({
-                where: { id: user.id },
-                data: { generationCount: { increment: 1 } }
-            })
-        }
+return `
+Согласно ст.136 ТК РФ заработная плата должна выплачиваться своевременно.
 
-        // Формируем текст претензии
-        const employerName = claimData?.employer?.name || '___________'
-        const employerAddress = claimData?.employer?.address || '___________'
-        const claimants = claimData?.workers?.map(w => w.name).join(', ') || '___________'
-        const description = claimData?.circumstances?.description || '___________'
-        const debtAmount = claimData?.circumstances?.debtAmount || '___________'
-        const compensation = claimData?.circumstances?.compensation || '___________'
-        const evidenceList = claimData?.evidence?.join(', ') || '___________'
+Согласно ст.236 ТК РФ при задержке выплаты работодатель обязан выплатить компенсацию.
+`
+}
 
-        const text = `
-ДОСУДЕБНАЯ ПРЕТЕНЗИЯ
+if(category==="unofficial"){
 
-Ответчик: ${employerName}
-Адрес: ${employerAddress}
+return `
+Согласно ст.16 ТК РФ трудовые отношения возникают при фактическом допуске к работе.
 
-Заявитель: ${claimants}
+Согласно ст.67 ТК РФ работодатель обязан оформить трудовой договор.
+`
+}
 
-Обстоятельства: ${description}
+if(category==="dismissal"){
 
-Сумма задолженности: ${debtAmount} руб.
-Компенсация за просрочку: ${compensation}
+return `
+Согласно ст.140 ТК РФ расчет при увольнении производится в день увольнения.
+`
+}
 
-Доказательства: ${evidenceList}
+if(category==="zpp_product"){
 
-На основании изложенного, требую погасить задолженность в течение 10 дней с момента получения настоящей претензии.
+return `
+Согласно ст.18 Закона РФ "О защите прав потребителей" покупатель вправе требовать возврата денежных средств за товар ненадлежащего качества.
+`
+}
 
-В случае неисполнения требования буду вынужден обратиться в суд за защитой своих прав, а также с требованием о взыскании судебных расходов.
+if(category==="zpp_service"){
 
-Дата: ${new Date().toLocaleDateString('ru-RU')}
+return `
+Согласно ст.29 Закона РФ "О защите прав потребителей" потребитель вправе требовать возврата средств за некачественную услугу.
+`
+}
 
-Подпись: __________________
+if(category==="infoproduct"){
+
+return `
+Согласно ст.29 Закона РФ "О защите прав потребителей" и ст.779 ГК РФ исполнитель обязан оказать услугу надлежащего качества.
+`
+}
+
+if(category==="loan"){
+
+return `
+Согласно ст.807 ГК РФ заемщик обязан вернуть сумму займа.
+`
+}
+
+return `
+Согласно ст.309 ГК РФ обязательства должны исполняться надлежащим образом.
 `
 
-        /* ==============================
-        PDF
-        ============================== */
-        if (format === "pdf") {
-            const doc = new PDFDocument()
-
-            // Подключаем шрифт с кириллицей, если он есть
-            const fontPath = path.join(__dirname, "fonts", "DejaVuSans.ttf")
-            if (fs.existsSync(fontPath)) {
-                doc.registerFont("main", fontPath)
-                doc.font("main")
-            } else {
-                console.warn("Шрифт DejaVuSans не найден, кириллица может отображаться некорректно")
-            }
-
-            res.setHeader("Content-Type", "application/pdf")
-            res.setHeader("Content-Disposition", "attachment; filename=pretension.pdf")
-
-            doc.pipe(res)
-            doc.fontSize(18).text("ДОСУДЕБНАЯ ПРЕТЕНЗИЯ")
-            doc.moveDown()
-            doc.fontSize(12).text(text)
-            doc.end()
-            return
-        }
-
-        /* ==============================
-        DOCX
-        ============================== */
-        if (format === "docx") {
-            const doc = new Document({
-                sections: [{
-                    children: [
-                        new Paragraph({
-                            children: [new TextRun({ text: "ДОСУДЕБНАЯ ПРЕТЕНЗИЯ", bold: true, size: 36 })]
-                        }),
-                        new Paragraph({
-                            children: [new TextRun({ text: text, size: 24 })]
-                        })
-                    ]
-                }]
-            })
-
-            const buffer = await Packer.toBuffer(doc)
-            res.setHeader("Content-Disposition", "attachment; filename=pretension.docx")
-            res.send(buffer)
-            return
-        }
-
-        res.status(400).json({ error: "Invalid format" })
-    } catch (e) {
-        console.error(e)
-        res.status(500).json({ error: "Generation error" })
-    }
-})
-
-/* ==============================
-404
-============================== */
-app.use((req, res) => {
-    res.status(404).json({ error: "Route not found" })
-})
-
-/* ==============================
-START SERVER
-============================== */
-const PORT = process.env.PORT || 8080
-async function start() {
-    try {
-        await prisma.$connect()
-        console.log("DB connected")
-    } catch (e) {
-        console.error("DB error", e)
-    }
-    app.listen(PORT, () => {
-        console.log("✓ Server running on", PORT)
-    })
 }
+
+/* =============================
+VIOLATIONS BLOCK
+============================= */
+
+function generateViolationBlock(category){
+
+if(category==="salary"){
+return `
+НАРУШЕНИЯ
+
+1. Нарушение сроков выплаты заработной платы.
+2. Нарушение требований ст.136 ТК РФ.
+`
+}
+
+if(category==="unofficial"){
+return `
+НАРУШЕНИЯ
+
+1. Фактический допуск к работе без оформления трудового договора.
+2. Нарушение ст.16 и ст.67 ТК РФ.
+`
+}
+
+if(category==="dismissal"){
+return `
+НАРУШЕНИЯ
+
+1. Не произведён расчет при увольнении.
+2. Нарушена ст.140 ТК РФ.
+`
+}
+
+if(category==="zpp_product"){
+return `
+НАРУШЕНИЯ
+
+1. Реализация товара ненадлежащего качества.
+2. Нарушение ст.18 Закона РФ "О защите прав потребителей".
+`
+}
+
+if(category==="zpp_service"){
+return `
+НАРУШЕНИЯ
+
+1. Услуга оказана ненадлежащего качества.
+2. Нарушение ст.29 Закона РФ "О защите прав потребителей".
+`
+}
+
+if(category==="infoproduct"){
+return `
+НАРУШЕНИЯ
+
+1. Образовательная услуга оказана ненадлежащего качества.
+2. Нарушение ст.4 и ст.29 Закона РФ "О защите прав потребителей".
+`
+}
+
+if(category==="loan"){
+return `
+НАРУШЕНИЯ
+
+1. Заёмщик не вернул денежные средства.
+2. Нарушение обязательств по договору займа.
+`
+}
+
+return `
+НАРУШЕНИЯ
+
+1. Ненадлежащее исполнение обязательств.
+`
+}
+
+/* =============================
+CONSEQUENCES BLOCK
+============================= */
+
+function generateConsequences(data){
+
+const amount = data.circumstances?.debtAmount || ""
+
+return `
+ПОСЛЕДСТВИЯ НАРУШЕНИЙ
+
+В результате действий ответчика заявителю причинён материальный ущерб.
+
+Размер ущерба: ${amount} руб.
+
+Также действия ответчика причинили моральный вред.
+`
+}
+
+/* =============================
+DEMANDS BLOCK
+============================= */
+
+function generateDemandBlock(category){
+
+if(category==="salary"){
+return `
+ТРЕБОВАНИЯ
+
+1. Выплатить задолженность по заработной плате.
+2. Выплатить компенсацию за задержку согласно ст.236 ТК РФ.
+`
+}
+
+if(category==="zpp_product"){
+return `
+ТРЕБОВАНИЯ
+
+1. Вернуть стоимость товара.
+2. Компенсировать причинённые убытки.
+`
+}
+
+if(category==="zpp_service"){
+return `
+ТРЕБОВАНИЯ
+
+1. Вернуть денежные средства за услугу.
+`
+}
+
+if(category==="infoproduct"){
+return `
+ТРЕБОВАНИЯ
+
+1. Вернуть денежные средства за обучение.
+2. Компенсировать причинённый моральный вред.
+`
+}
+
+if(category==="loan"){
+return `
+ТРЕБОВАНИЯ
+
+1. Вернуть сумму долга.
+`
+}
+
+return `
+ТРЕБОВАНИЯ
+
+1. Исполнить обязательства по договору.
+`
+}
+
+/* =============================
+CONTROL AUTHORITIES
+============================= */
+
+function generateAuthorityBlock(category){
+
+if(category==="salary" || category==="unofficial" || category==="dismissal"){
+return `
+В СЛУЧАЕ ОТКАЗА
+
+В случае отказа выполнить указанные требования
+я буду вынужден обратиться:
+
+• в Государственную инспекцию труда
+• в прокуратуру
+• в суд
+`
+}
+
+if(category==="zpp_product" || category==="zpp_service" || category==="infoproduct"){
+return `
+В СЛУЧАЕ ОТКАЗА
+
+В случае отказа выполнить требования
+я буду вынужден обратиться:
+
+• в Роспотребнадзор
+• в суд
+`
+}
+
+if(category==="loan"){
+return `
+В СЛУЧАЕ ОТКАЗА
+
+В случае отказа вернуть денежные средства
+я буду вынужден обратиться в суд
+с требованием о взыскании долга.
+`
+}
+
+return `
+В СЛУЧАЕ ОТКАЗА
+
+В случае отказа я буду вынужден обратиться в суд.
+`
+}
+
+/* =============================
+TEXT GENERATOR
+============================= */
+
+function generateClaimText(data){
+
+const employer=data.employer||{}
+const workers=data.workers||[]
+const circumstances=data.circumstances||{}
+
+let claimants=""
+
+workers.forEach(w=>{
+
+claimants+=`
+${w.name}
+Адрес: ${w.address}
+Телефон: ${w.phone}
+Email: ${w.email}
+
+`
+
+})
+
+const evidence = generateEvidenceText(data.evidence)
+
+const law = generateLawBlock(data.type)
+
+const violations = generateViolationBlock(data.type)
+
+const consequences = generateConsequences(data)
+
+const demands = generateDemandBlock(data.type)
+
+const authorities = generateAuthorityBlock(data.type)
+
+return{
+
+employer,
+claimants,
+circumstances,
+law,
+evidence,
+violations,
+consequences,
+demands,
+authorities
+
+}
+
+}
+
+/* =============================
+DOCUMENT GENERATION
+============================= */
+
+app.post("/api/generate", auth, generateLimiter, async(req,res)=>{
+
+try{
+
+const user = await prisma.user.findUnique({
+where:{id:req.user.userId}
+})
+
+if(!user) return res.status(404).json({error:"User not found"})
+
+if(!user.proStatus && user.generationCount>=2){
+return res.status(403).json({error:"Free limit exceeded"})
+}
+
+const {claimData,format} = req.body
+
+const data = generateClaimText(claimData)
+
+if(!user.proStatus){
+
+await prisma.user.update({
+where:{id:user.id},
+data:{generationCount:{increment:1}}
+})
+
+}
+
+/* ================= PDF */
+
+if(format==="pdf"){
+
+const doc = new PDFDocument({margin:50})
+
+res.setHeader("Content-Type","application/pdf")
+res.setHeader("Content-Disposition","attachment; filename=pretension.pdf")
+
+doc.pipe(res)
+
+doc.fontSize(12)
+
+doc.text(`Руководителю ${data.employer.name}`,{align:"right"})
+doc.text(`${data.employer.address}`,{align:"right"})
+
+doc.moveDown(2)
+
+doc.text("От:",{align:"left"})
+doc.text(data.claimants,{align:"left"})
+
+doc.moveDown(2)
+
+doc.fontSize(16)
+
+doc.text("ДОСУДЕБНАЯ ПРЕТЕНЗИЯ",{align:"center"})
+
+doc.moveDown(2)
+
+doc.fontSize(12)
+
+doc.text("ОБСТОЯТЕЛЬСТВА")
+doc.moveDown()
+
+doc.text(data.circumstances.description || "")
+doc.moveDown()
+doc.text(data.violations)
+
+doc.moveDown()
+doc.text(data.evidence)
+
+doc.moveDown()
+doc.text(data.law)
+
+doc.moveDown()
+doc.text(data.consequences)
+
+doc.moveDown()
+doc.text(data.demands)
+doc.moveDown()
+doc.text(data.authorities)
+
+doc.moveDown()
+
+doc.text(`Дата: ${new Date().toLocaleDateString("ru-RU")}`)
+
+doc.end()
+
+return
+}
+
+/* ================= DOCX */
+
+if(format==="docx"){
+
+const doc = new Document({
+sections:[{
+children:[
+
+new Paragraph({
+children:[new TextRun({
+text:"ДОСУДЕБНАЯ ПРЕТЕНЗИЯ",
+bold:true,
+size:32
+})]
+}),
+
+new Paragraph({ children:[new TextRun("")] }),
+
+new Paragraph({
+children:[new TextRun("ОТ ЗАЯВИТЕЛЯ:")]
+}),
+
+new Paragraph({
+children:[new TextRun(data.claimants)]
+}),
+
+new Paragraph({ children:[new TextRun("")] }),
+
+new Paragraph({
+children:[new TextRun("ОБСТОЯТЕЛЬСТВА")]
+}),
+
+new Paragraph({
+children:[new TextRun(data.circumstances.description || "")]
+}),
+
+new Paragraph({ children:[new TextRun("")] }),
+
+new Paragraph({
+children:[new TextRun(data.violations)]
+}),
+
+new Paragraph({
+children:[new TextRun(data.evidence)]
+}),
+
+new Paragraph({
+children:[new TextRun(data.law)]
+}),
+
+new Paragraph({
+children:[new TextRun(data.consequences)]
+}),
+
+new Paragraph({
+children:[new TextRun(data.demands)]
+}),
+
+new Paragraph({
+children:[new TextRun(data.authorities)]
+})
+
+]
+}]
+})
+const buffer = await Packer.toBuffer(doc)
+
+res.setHeader("Content-Disposition","attachment; filename=pretension.docx")
+
+res.send(buffer)
+
+return
+}
+
+}catch(e){
+
+console.error("Generation error:",e)
+
+res.status(500).json({error:"Generation error"})
+
+}
+
+})
+
+/* =============================
+SEARCH BY INN
+============================= */
+
+app.post("/api/companyByInn", companySearchLimiter, async(req,res)=>{
+
+try{
+
+const {inn} = req.body
+
+if(!inn){
+return res.status(400).json({error:"INN required"})
+}
+
+if(companyCache.has(inn)){
+return res.json(companyCache.get(inn))
+}
+
+const r = await fetch("https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party",{
+
+method:"POST",
+
+headers:{
+"Content-Type":"application/json",
+"Authorization":`Token ${process.env.DADATA_KEY}`
+},
+
+body:JSON.stringify({query:inn})
+
+})
+
+const data = await r.json()
+
+companyCache.set(inn,data)
+
+res.json(data)
+
+}catch(e){
+
+console.error("DaData error",e)
+
+res.status(500).json({error:"dadata error"})
+
+}
+
+})
+/* =============================
+SEARCH BY NAME
+============================= */
+app.post("/api/companySearch", companySearchLimiter, async(req,res)=>{
+
+try{
+
+const {query} = req.body
+
+if(!query){
+return res.status(400).json({error:"query required"})
+}
+
+if(companyCache.has(query)){
+return res.json(companyCache.get(query))
+}
+
+const r = await fetch("https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/party",{
+
+method:"POST",
+
+headers:{
+"Content-Type":"application/json",
+"Authorization":`Token ${process.env.DADATA_KEY}`
+},
+
+body:JSON.stringify({query})
+
+})
+
+const data = await r.json()
+
+companyCache.set(query,data)
+
+res.json(data)
+
+}catch(e){
+
+console.error("DaData error",e)
+
+res.status(500).json({error:"dadata error"})
+
+}
+
+})
+
+/* ============================= */
+
+/* =============================
+CHECK TELEGRAM SUBSCRIPTION
+============================= */
+
+app.post("/api/check-subscription", async(req,res)=>{
+
+try{
+
+const {telegramId} = req.body
+
+if(!telegramId){
+return res.status(400).json({error:"telegramId required"})
+}
+
+const response = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getChatMember`,{
+method:"POST",
+headers:{
+"Content-Type":"application/json"
+},
+body:JSON.stringify({
+chat_id:"@LegalProSupport",
+user_id:telegramId
+})
+})
+
+const data = await response.json()
+
+if(
+data.result.status==="member" ||
+data.result.status==="administrator" ||
+data.result.status==="creator"
+){
+return res.json({subscribed:true})
+}
+
+return res.json({subscribed:false})
+
+}catch(e){
+
+console.error("Subscription check error",e)
+
+res.status(500).json({error:"subscription check failed"})
+
+}
+
+})
+
+const PORT = process.env.PORT || 8080
+
+async function start(){
+
+await prisma.$connect()
+
+app.listen(PORT,()=>{
+
+console.log("Server running on",PORT)
+
+})
+
+}
+
 start()
