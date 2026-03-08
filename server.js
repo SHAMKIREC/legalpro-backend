@@ -772,14 +772,14 @@ return res.status(400).json({ error: "Telegram ID missing" })
 }
 
 let user = await prisma.user.findUnique({
-where: { telegramId: id }
+where: { telegramId: String(id) }
 })
 
 if (!user) {
 
 user = await prisma.user.create({
 data: {
-telegramId: id,
+telegramId: String(id),
 firstName: first_name,
 lastName: last_name,
 username: username,
