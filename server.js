@@ -757,6 +757,60 @@ res.status(500).json({error:"subscription check failed"})
 
 })
 
+/* =============================
+TELEGRAM LOGIN
+============================= */
+
+app.get("/api/auth/telegram-login", async (req, res) => {
+
+try {
+
+const { id, first_name, last_name, username, photo_url } = req.query
+
+if (!id) {
+return res.status(400).json({ error: "Telegram ID missing" })
+}
+
+let user = await prisma.user.findUnique({
+where: { telegramId: id }
+})
+
+if (!user) {
+
+user = await prisma.user.create({
+data: {
+telegramId: id,
+firstName: first_name,
+lastName: last_name,
+username: username,
+photoUrl: photo_url,
+generationCount: 0,
+proStatus: false
+}
+})
+
+}
+
+const token = jwt.sign(
+{ userId: user.id },
+process.env.JWT_SECRET,
+{ expiresIn: "30d" }
+)
+
+res.redirect(`https://shamkirec.github.io/legalpro-site/?token=${token}`)
+
+} catch (e) {
+
+console.error("Telegram login error:", e)
+
+res.redirect(`https://shamkirec.github.io/legalpro-site/?error=server`)
+
+}
+
+})
+
+/* ============================= */
+
 const PORT = process.env.PORT || 8080
 
 async function start(){
