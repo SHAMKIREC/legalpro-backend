@@ -1,16 +1,8 @@
-// Simple healthcheck script for Docker
-const http = require('http');
+const express = require('express')
+const router = express.Router()
 
-const options = {
-  method: 'GET',
-  host: 'localhost',
-  port: process.env.PORT || 3000,
-  path: '/api/v1/health'
-};
+router.get('/', (req, res) => {
+  res.json({ status: 'ok', timestamp: Date.now() })
+})
 
-const req = http.request(options, (res) => {
-  process.exit(res.statusCode === 200 ? 0 : 1);
-});
-
-req.on('error', () => process.exit(1));
-req.end();
+module.exports = router
