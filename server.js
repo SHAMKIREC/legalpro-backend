@@ -759,7 +759,7 @@ res.status(500).json({error:"subscription check failed"})
 
 })
 
-/* =============================
+
 
 // Подключаем дополнительные маршруты
 app.use('/api/auth', require('./маршруты/auth'))
