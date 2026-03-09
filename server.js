@@ -846,7 +846,8 @@ app.get('/healthcheck', (req,res)=>{
 res.json({
 status:"ok",
 timestamp:Date.now()
-}
+  })
+})
 
 const PORT = process.env.PORT || 8080
 
