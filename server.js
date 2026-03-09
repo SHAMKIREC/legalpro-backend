@@ -760,80 +760,9 @@ res.status(500).json({error:"subscription check failed"})
 })
 
 /* =============================
-TELEGRAM LOGIN
-============================= */
 
-const crypto = require("crypto")
-
-app.get("/api/auth/telegram-login", async (req, res) => {
-
-try {
-
-const { id, first_name, last_name, username, photo_url, auth_date, hash } = req.query
-
-if (!id || !auth_date || !hash) {
-return res.status(400).json({ error: "Missing required fields" })
-}
-
-const dataCheckString = Object.keys(req.query)
-.filter(key => key !== "hash")
-.sort()
-.map(key => `${key}=${req.query[key]}`)
-.join("\n")
-
-const secretKey = crypto
-.createHash("sha256")
-.update(process.env.TELEGRAM_BOT_TOKEN)
-.digest()
-
-const hmac = crypto
-.createHmac("sha256", secretKey)
-.update(dataCheckString)
-.digest("hex")
-
-if (hmac !== hash) {
-return res.status(403).json({ error: "Invalid telegram auth" })
-}
-
-let user = await prisma.user.findUnique({
-where: { telegramId: id.toString() }
-})
-
-if (!user) {
-
-user = await prisma.user.create({
-data: {
-telegramId: id.toString(),
-username: username || null,
-firstName: first_name || null,
-lastName: last_name || null,
-photoUrl: photo_url || null,
-proStatus: false,
-generationCount: 0
-}
-})
-
-}
-
-const token = jwt.sign(
-{ userId: user.id, telegramId: user.telegramId },
-process.env.JWT_SECRET,
-{ expiresIn: "30d" }
-)
-
-res.redirect(`https://shamkirec.github.io/legalpro-site/?token=${token}`)
-
-} catch (e) {
-
-console.error("Telegram login error:", e)
-
-res.redirect(`https://shamkirec.github.io/legalpro-site/?error=server`)
-
-}
-
-})
 // Подключаем дополнительные маршруты
-app.use('/api/auth-system', require('./маршруты/auth'))
+app.use('/api/auth', require('./маршруты/auth'))
 app.use('/api/health', require('./маршруты/health'))
 app.use('/api/webhooks', require('./маршруты/webhooks'))
 
