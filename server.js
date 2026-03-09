@@ -834,6 +834,11 @@ res.redirect(`https://shamkirec.github.io/legalpro-site/?error=server`)
 }
 
 })
+// Подключаем дополнительные маршруты
+app.use('/api/auth', require('./маршруты/auth'))
+app.use('/api/health', require('./маршруты/health'))
+app.use('/api/webhooks', require('./маршруты/webhooks'))
+
 /* ============================= */
 
 const PORT = process.env.PORT || 8080
