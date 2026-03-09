@@ -51,9 +51,11 @@ router.post('/telegram', async (req, res) => {
       }
 
       // Extract user data
-      telegramUser = JSON.parse(initDataUnsafe.user);
-    }
-    
+telegramUser =
+  typeof initDataUnsafe.user === "string"
+    ? JSON.parse(initDataUnsafe.user)
+    : initDataUnsafe.user;
+      
     // Find or create user
     let user = await prisma.user.findUnique({
       where: { telegramId: telegramUser.id.toString() }
