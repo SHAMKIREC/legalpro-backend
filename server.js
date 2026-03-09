@@ -762,9 +762,9 @@ res.status(500).json({error:"subscription check failed"})
 
 
 // Подключаем дополнительные маршруты
-app.use('/api/auth', require('./маршруты/auth'))
-app.use('/api/health', require('./маршруты/health'))
-app.use('/api/webhooks', require('./маршруты/webhooks'))
+app.use('/api/auth', require('./routes/auth'))
+app.use('/api/health', require('./routes/health'))
+app.use('/api/webhooks', require('./routes/webhooks'))
 
 /* ============================= */
 /* ============================= */
