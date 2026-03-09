@@ -1,5 +1,8 @@
 require('dotenv').config()
 
+const cookieParser = require('cookie-parser')
+const rateLimit = require('express-rate-limit')
+
 const express = require('express')
 const rateLimit = require('express-rate-limit')
 const cors = require('cors')
@@ -59,6 +62,7 @@ allowedHeaders:["Content-Type","Authorization"]
 }))
 
 app.use(express.json())
+app.use(cookieParser())
 
 /* =============================
 AUTH
