@@ -1,8 +1,7 @@
-const express = require('express')
-const router = express.Router()
-
-router.get('/', (req, res) => {
-  res.json({ status: 'ok', timestamp: Date.now() })
-})
-
-module.exports = router
+module.exports = (req, res) => {
+  res.json({
+    status: "ok",
+    uptime: process.uptime(),
+    timestamp: Date.now()
+  })
+}
