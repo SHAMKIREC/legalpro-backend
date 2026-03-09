@@ -840,6 +840,13 @@ app.use('/api/health', require('./маршруты/health'))
 app.use('/api/webhooks', require('./маршруты/webhooks'))
 
 /* ============================= */
+/* ============================= */
+
+app.get('/healthcheck', (req,res)=>{
+res.json({
+status:"ok",
+timestamp:Date.now()
+}
 
 const PORT = process.env.PORT || 8080
 
